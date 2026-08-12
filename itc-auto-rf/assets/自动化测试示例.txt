@@ -1,0 +1,183 @@
+# 环境配置及topo描述
+测试床(testbed)： testbed_001
+设备(DUT)：dut_001   10.110.104.137
+测试仪(Tester)：tester_001  10.110.104.106
+测试仪接口介质：copper
+测试仪登入名：ruijie
+组件：route
+
+设备(DUT) -- 测试仪(Tester) --- 端口代号
+hundredGigabitEthernet 1/1 --  1/1/5 -- <port1>
+hundredGigabitEthernet 1/2 --  1/1/6 -- <port2>
+hundredGigabitEthernet 1/17 --  1/1/7 -- <port3>
+hundredGigabitEthernet 1/18 --  1/1/8 -- <port4>
+
+# 执行用例
+
+## TEST-CASE 1
+### 用例描述
+用例编号：ECMP-TEST-ITC-001
+用例名称：路由ecmp功能测试
+测试类型：可靠性测试
+用例等级：L0
+适用产品：s6950
+来源项目：12.5SPR37
+编写人员：阮学勇
+编写日期：2026/7/31
+测试描述：
+1.配置4路ecmp路由
+2.打流并观察流量在4个端口均衡
+3.shutdown其中一个端口，观察流量能够重新剩余的3个端口中均衡
+修改记录：
+备注：
+
+### 用例步骤
+1. DUT配置路由
+```DUT
+configure
+int <port1>
+no sw
+ip address 49.0.0.1/24
+int <port2>
+no sw
+ip address 50.0.0.1/24
+int <port3>
+no sw
+ip address 51.0.0.1/24
+int <port4>
+no sw
+ip address 52.0.0.1/24
+
+configure
+arp 49.0.0.2 0000.0000.4902  arpa
+arp 50.0.0.2 0000.0000.5002  arpa
+arp 51.0.0.2 0000.0000.5102  arpa
+arp 52.0.0.2 0000.0000.5202  arpa
+
+ip route 1.1.1.1 255.255.255.255 49.0.0.2
+ip route 1.1.1.1 255.255.255.255 50.0.0.2
+ip route 1.1.1.1 255.255.255.255 51.0.0.2
+ip route 1.1.1.1 255.255.255.255 52.0.0.2
+```
+配置完成后有预期结果1
+2. Tester打流
+<port1> 配置IPV4报文：dmac=<sysmac>+1, smac=0000.0000.1111 dip=1.1.1.1 sip=2.2.2.2 proto=UDP, sip递增10000，步长=1，流量10000pps
+等待5s后抓包查看计数，有预期结果2
+3. DUT修改配置
+configure
+int <port3>
+shutdown
+等待5s后抓包统计，有预期结果3
+
+### 用例预期结果
+1. 配置ok (软检查，只记录不阻断)
+2. Tester观察流量统计
+port1 出口速率 2500pps, 误差-5% ~ +5%
+port2 出口速率 2500pps, 误差-5% ~ +5%
+port3 出口速率 2500pps, 误差-5% ~ +5%
+port4 出口速率 2500pps, 误差-5% ~ +5%
+3. Tester观察流量统计
+port1 出口速率 3333pps, 误差-5% ~ +5%
+port2 出口速率 3333pps, 误差-5% ~ +5%
+port4 出口速率 3333pps, 误差-5% ~ +5%
+
+## TEST-CASE 2
+### 用例描述
+用例编号：IT-UC-NH-WEIGHT-023
+用例名称：第三级WCMP出口link变化
+测试类型：可靠性测试
+用例等级：L0
+适用产品：s6950
+来源项目：12.5SPR37
+测试描述：
+1.配置四个三层口并配置静态邻接
+2.开启WCMP开关并配置SRv6路由
+3.从其中一个路由口打入IPv6报文命中路由
+4.查看端口计数
+5.分别shutdown/no shutdown（间隔5s）WCMP的单个成员口各一次，全部成员恢复up后并查看端口计数
+6.shutdown带权重的最后一个成员口并查看端口计数
+7.全部成员恢复up后查看端口计数
+8.查看syslog是否报错
+备注：
+
+### 用例步骤
+1. DUT配置四个三层口并配置静态邻接
+```DUT
+configure
+int <port1>
+no sw
+ipv6 address 2009::1/64
+!
+int <port2>
+no sw
+ipv6 address 200a::1/64
+!
+int <port3>
+no sw
+ipv6 address 200b::1/64
+!
+int <port4>
+no sw
+ipv6 address 200c::1/64
+!
+ipv6 neighbor 2009::2 <port1> 0000.0000.0009
+ipv6 neighbor 200a::2 <port2> 0000.0000.000a
+ipv6 neighbor 200b::2 <port3> 0000.0000.000b
+ipv6 neighbor 200c::2 <port4> 0000.0000.000c
+```
+配置完成后有预期结果1
+2. 开启WCMP开关并配置SRv6路由
+```DUT
+configure
+weight enhance enable
+！
+segment-routing ipv6
+locator ggaa default
+prefix 8000:8000:: 48 bind-sid 16
+opcode ::6:2 end-x interface <port2> nexthop 200a::2 psp
+opcode ::6:2 end-x interface <port3> nexthop 200b::2 psp
+opcode ::6:2 end-x interface <port4> nexthop 200c::2 weight 3 psp
+opcode ::6:2 end-x commit
+!
+!
+segment-routing traffic-eng
+segment-list srv6-1 srv6
+index 1 srv6 8000:8000::6:2
+index 2 srv6 1000:1000::1
+commit
+!
+policy srv6-1 color 1 end-point 1111::1 srv6
+bind-sid srv6 8000:8000::1
+candidate-path 1 explicit
+segment-list srv6-1
+exit-sidlist-mode
+exit-candpath-mode
+!
+!
+!
+ipv6 route 2123::/16 srp srv6 srv6-1
+```
+配置完成后有预期结果2
+3. 从其中一个路由口打入IPv6报文命中路由
+<port1> 配置IPV6报文：SMAC:0000.0001.0001, DMAC:三层MAC，SIPv6:1000::2, DIPv6:2123::1，变化50000，速率100000pps
+等待5s后查看端口计数，有预期结果3和4
+4. 分别shutdown/no shutdown（间隔5s）WCMP的单个成员口各一次，全部成员恢复up后并查看端口计数
+等待5s后抓包统计，有预期结果5
+5. shutdown带权重的最后一个成员口并查看端口计数
+等待5s后抓包统计，有预期结果6
+6. 全部成员恢复up后查看端口计数
+等待5s后抓包统计，有预期结果7
+7. 查看syslog是否报错
+有预期结果8
+
+### 用例预期结果
+1. 通过show ipv6 neighbor查看配置成功；
+2. 通过show segment-routing policy srv6和show ipv6 route查看配置成功；
+3. 流量构造及打流成功；
+4. 端口9输入速率100000pps，端口10-12输出速率分别是20000pps、20000pps、60000pps；
+5. 端口9输入速率100000pps，端口10-12输出速率分别是20000pps、20000pps、60000pps；
+6. 端口9输入速率100000pps，端口10-11输出速率分别是50000pps、50000pps；
+7. 端口9输入速率100000pps，端口10-12输出速率分别是20000pps、20000pps、60000pps；
+8. 通过show logging | include error查看无syslog报错;
+
+## TEST-CASE 3
